@@ -12,8 +12,8 @@ import fs2._
 
 object Facescrub {
 
-  case class FacescrubRecord(name: String, image_id: Int, face_id: Int, url: String, bbox: BoundingBox)
-  case class FacescrubImage(name: String, image_id: Int, face_id: Int, image: Array[Byte], bbox: BoundingBox)
+  case class FacescrubRecord(name: String, gender: String, image_id: Int, face_id: Int, url: String, bbox: BoundingBox)
+  case class FacescrubImage(name: String, gender: String, image_id: Int, face_id: Int, image: Array[Byte], bbox: BoundingBox)
   case class BoundingBox(p1: Int, p2: Int, p3: Int, p4: Int)
 
   lazy val actorsFile = getClass.getResource("/facescrub_actors.txt")
@@ -23,7 +23,7 @@ object Facescrub {
 
   val count = new java.util.concurrent.atomic.AtomicInteger(0)
 
-  def parseRecord(line: String): Option[FacescrubRecord] = {
+  def parseRecord(line: String)(gender: String): Option[FacescrubRecord] = {
     try {
       val fields = line.split("\\s+")
       val name = fields.takeWhile(s => s.forall(!_.isDigit))
@@ -32,7 +32,7 @@ object Facescrub {
       val url = fields(name.length + 2)
       val bbox = fields(name.length + 3).split(",")
       val boundingBox = BoundingBox(bbox(0).toInt, bbox(1).toInt, bbox(2).toInt, bbox(3).toInt)
-      Some(FacescrubRecord(name.mkString("_").toLowerCase, image_id.toInt, face_id.toInt, url, boundingBox))
+      Some(FacescrubRecord(name.mkString("_").toLowerCase, gender, image_id.toInt, face_id.toInt, url, boundingBox))
     } catch {
       case x: java.lang.ArrayIndexOutOfBoundsException => None
       case _: Throwable => None
@@ -44,7 +44,7 @@ object Facescrub {
       .through(text.utf8Decode)
       .through(text.lines)
       .drop(1)
-      .map(parseRecord)
+      .map(line => parseRecord(line)("m"))
       .collect( { case Some(x) => x } )
 
   def actressStream: Stream[Task, FacescrubRecord] =
@@ -52,7 +52,7 @@ object Facescrub {
       .through(text.utf8Decode)
       .through(text.lines)
       .drop(1)
-      .map(parseRecord)
+      .map(line => parseRecord(line)("f"))
       .collect( { case Some(x) => x } )
 
   def imageStreams(savePath: String): Vector[Stream[Task, Unit]] =
@@ -70,7 +70,7 @@ object Facescrub {
         Xor.catchNonFatal {
           Http(rec.url).timeout(15000, 25000).option(HttpOptions.followRedirects(true)).asBytes match {
             case resp if resp.is2xx && det.isImage(resp.body) =>
-              Some(FacescrubImage(rec.name, rec.image_id, rec.face_id, resp.body, rec.bbox))
+              Some(FacescrubImage(rec.name, rec.gender, rec.image_id, rec.face_id, resp.body, rec.bbox))
             case _ => None
           }
         } getOrElse None
@@ -81,7 +81,7 @@ object Facescrub {
     _.evalMap[Task, Task, Unit] { img =>
       Task.delay {
         val bbox = s"(${img.bbox.p1}x${img.bbox.p2}x${img.bbox.p3}x${img.bbox.p4})"
-        val filename = s"${img.image_id}-${img.face_id}-${img.name}-$bbox"
+        val filename = s"${img.gender}-${img.image_id}-${img.face_id}-${img.name}-$bbox"
         val os = new FileOutputStream(s"$savePath/$filename.jpg").getChannel
         val buffer = ByteBuffer.allocate(4096)
 
